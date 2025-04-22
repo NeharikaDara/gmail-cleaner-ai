@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: gmail-cleaner-ai
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python app.py"
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        value: your-client-id-here
+      - key: GOOGLE_CLIENT_SECRET
+        value: your-client-secret-here
+      - key: FLASK_SECRET
+        value: random-secret-key
