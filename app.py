@@ -5,58 +5,48 @@ from google.oauth2.credentials import Credentials
 import os
 
 app = Flask(__name__)
-app.secret_key = "any_random_secret"  # can be anything
+app.secret_key = os.getenv("FLASK_SECRET", "fallback_secret")
 
-# Load environment variables (you'll set these on Render later)
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-
-
-
-
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
-# Google OAuth config
-CLIENT_CONFIG = {
-    "web": {
-        "client_id": CLIENT_ID,
-        "project_id": "gmail-cleaner-ai",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": CLIENT_SECRET,
-        "redirect_uris": ["http://localhost:5000/callback"],
-        "javascript_origins": ["http://localhost:5000"]
+def build_client_config():
+    base_url = os.getenv("BASE_URL", "http://localhost:10000")  # fallback if env not set
+    return {
+        "web": {
+            "client_id": CLIENT_ID,
+            "project_id": "gmail-cleaner-ai",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": CLIENT_SECRET,
+            "redirect_uris": [f"{base_url}/callback"],
+            "javascript_origins": [base_url]
+        }
     }
-}
-
-
-
 
 @app.route("/")
 def home():
     return "<h2>Welcome to Gmail Cleaner AI</h2><br><a href='/login'>Login with Google</a>"
 
-
 @app.route("/login")
 def login():
     flow = Flow.from_client_config(
-        CLIENT_CONFIG,
+        build_client_config(),
         scopes=SCOPES,
-        redirect_uri="http://localhost:5000/callback"
+        redirect_uri=f"{os.getenv('BASE_URL')}/callback"
     )
     auth_url, _ = flow.authorization_url(prompt='consent')
-    return redirect(auth_url)  # ✅ that's it!
-
-
+    return redirect(auth_url)
 
 @app.route("/callback")
 def callback():
     flow = Flow.from_client_config(
-        CLIENT_CONFIG,
+        build_client_config(),
         scopes=SCOPES,
-        redirect_uri="http://localhost:5000/callback"
+        redirect_uri=f"{os.getenv('BASE_URL')}/callback"
     )
     flow.fetch_token(authorization_response=request.url)
 
@@ -71,15 +61,12 @@ def callback():
     }
     return redirect("/clean")
 
-
-
 @app.route("/clean")
 def clean():
     creds_dict = session.get("creds")
     creds = Credentials(**creds_dict)
     service = build('gmail', 'v1', credentials=creds)
 
-    # Query: Delete promotional emails older than 30 days
     query = "label:promotions older_than:30d"
     results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
@@ -91,9 +78,8 @@ def clean():
 
     return f"<h3>✅ Deleted {count} unwanted Gmail messages!</h3><br><a href='/'>Back to Home</a>"
 
-
 if __name__ == '__main__':
-   app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 
 
