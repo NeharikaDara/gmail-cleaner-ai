@@ -43,12 +43,19 @@ def login():
 
 @app.route("/callback")
 def callback():
+    print("✅ /callback route hit — starting token fetch")
+
     flow = Flow.from_client_config(
         build_client_config(),
         scopes=SCOPES,
         redirect_uri=f"{os.getenv('BASE_URL')}/callback"
     )
-    flow.fetch_token(authorization_response=request.url)
+
+    try:
+        flow.fetch_token(authorization_response=request.url)
+    except Exception as e:
+        print("❌ Error fetching token:", e)
+        return "Token fetch failed. Check your console/logs.", 500
 
     credentials = flow.credentials
     session['creds'] = {
@@ -59,7 +66,10 @@ def callback():
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
+
+    print("✅ Token fetched and saved to session.")
     return redirect("/clean")
+
 
 @app.route("/clean")
 def clean():
@@ -78,8 +88,12 @@ def clean():
 
     return f"<h3>✅ Deleted {count} unwanted Gmail messages!</h3><br><a href='/'>Back to Home</a>"
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+if __name__ == "__main__":
+    app.run(debug=True, port=10000)
+
+
+
+
 
 
 
