@@ -1,100 +1,71 @@
-from flask import Flask, redirect, url_for, session, request
+from flask import Flask, redirect, url_for, session, render_template, request
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 import os
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET", "fallback_secret")
+app.secret_key = 'your_secret_key'  # Replace with a strong random secret for production
 
-CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+# Allows non-HTTPS for local testing
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+# Your credentials file path
+CLIENT_SECRETS_FILE = "credentials.json"
 
-def build_client_config():
-    base_url = os.getenv("BASE_URL", "http://localhost:10000")  # fallback if env not set
-    return {
-        "web": {
-            "client_id": CLIENT_ID,
-            "project_id": "gmail-cleaner-ai",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_secret": CLIENT_SECRET,
-            "redirect_uris": [f"{base_url}/callback"],
-            "javascript_origins": [base_url]
-        }
-    }
+# Gmail full access scope (allows delete)
+SCOPES = ['https://mail.google.com/']
 
-@app.route("/")
-def home():
-    return "<h2>Welcome to Gmail Cleaner AI</h2><br><a href='/login'>Login with Google</a>"
 
-@app.route("/login")
-def login():
-    flow = Flow.from_client_config(
-        build_client_config(),
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/authorize')
+def authorize():
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri=f"{os.getenv('BASE_URL')}/callback"
+        redirect_uri='http://localhost:5000/oauth2callback'
     )
-    auth_url, _ = flow.authorization_url(prompt='consent')
-    return redirect(auth_url)
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes=False,  # force new token scope
+        prompt='consent'               # always ask user again
+    )
+    session['state'] = state
+    return redirect(authorization_url)
 
-@app.route("/callback")
-def callback():
-    print("✅ /callback route hit — starting token fetch")
 
-    flow = Flow.from_client_config(
-        build_client_config(),
+@app.route('/oauth2callback')
+def oauth2callback():
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri=f"{os.getenv('BASE_URL')}/callback"
+        redirect_uri='http://localhost:5000/oauth2callback'
     )
-
-    try:
-        flow.fetch_token(authorization_response=request.url)
-    except Exception as e:
-        print("❌ Error fetching token:", e)
-        return "Token fetch failed. Check your console/logs.", 500
+    flow.fetch_token(authorization_response=request.url)
 
     credentials = flow.credentials
-    session['creds'] = {
-        'token': credentials.token,
-        'refresh_token': credentials.refresh_token,
-        'token_uri': credentials.token_uri,
-        'client_id': credentials.client_id,
-        'client_secret': credentials.client_secret,
-        'scopes': credentials.scopes
-    }
+    print("🚨 Scopes granted:", credentials.scopes)  # DEBUG: see granted scopes
 
-    print("✅ Token fetched and saved to session.")
-    return redirect("/clean")
+    service = build('gmail', 'v1', credentials=credentials)
 
+    # Gmail search query: promotions older than 30 days
+    query = 'category:promotions older_than:30d'
+    result = service.users().messages().list(userId='me', q=query).execute()
+    messages = result.get('messages', [])
 
-@app.route("/clean")
-def clean():
-    creds_dict = session.get("creds")
-    creds = Credentials(**creds_dict)
-    service = build('gmail', 'v1', credentials=creds)
+    if not messages:
+        return '✅ No promotional emails older than 30 days found.'
 
-    query = "label:promotions older_than:30d"
-    results = service.users().messages().list(userId='me', q=query).execute()
-    messages = results.get('messages', [])
-
-    count = 0
+    # Delete each message
     for msg in messages:
         service.users().messages().delete(userId='me', id=msg['id']).execute()
-        count += 1
 
-    return f"<h3>✅ Deleted {count} unwanted Gmail messages!</h3><br><a href='/'>Back to Home</a>"
-
-if __name__ == "__main__":
-    app.run(debug=True, port=10000)
+    return f'✅ Gmail cleaned: {len(messages)} promotional emails older than 30 days deleted.'
 
 
-
-
-
-
-
-
+if __name__ == '__main__':
+    app.run(debug=True)
